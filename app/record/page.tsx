@@ -306,9 +306,16 @@ export default function RecordPage() {
       }
       draw()
 
-      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm'
+      const mime = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4;codecs=mp4a.40.2',
+        'audio/mp4',
+        'audio/ogg;codecs=opus',
+        'audio/ogg',
+      ].find((t) => {
+        try { return MediaRecorder.isTypeSupported(t) } catch { return false }
+      }) ?? ''
       const mr = new MediaRecorder(stream, { mimeType: mime })
       mrRef.current = mr
       chunksRef.current = []
