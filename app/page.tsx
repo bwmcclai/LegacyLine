@@ -93,7 +93,7 @@ function Header({ count }: { count: number }) {
           className="w-1.5 h-1.5 rounded-full"
           style={{ background: '#c9a84c', boxShadow: '0 0 6px #c9a84c' }}
         />
-        {count} {count === 1 ? 'Legacy' : 'Legacies'} Recorded
+        {count} {count === 1 ? 'Miller Legacy' : 'Miller Legacies'} Recorded
       </div>
     </motion.header>
   )
@@ -150,7 +150,7 @@ function HeroText({ visible }: { visible: boolean }) {
             style={{ background: 'linear-gradient(to bottom, transparent, rgba(201,168,76,0.4))' }}
           />
           <p className="text-white/30 text-xs tracking-[0.3em] uppercase">
-            Noblesville Seniors · Class of 2025
+            Noblesville Seniors · Class of 2026
           </p>
         </motion.div>
       )}
@@ -229,15 +229,36 @@ export default function WallPage() {
   return (
     <div
       className="fixed inset-0 overflow-hidden"
-      style={{
-        background:
-          'radial-gradient(ellipse 100% 60% at 50% 100%, rgba(201,168,76,0.05) 0%, transparent 60%), #0a0a0a',
-      }}
+      style={{ background: '#0a0a0a' }}
     >
+      {/* ── Hero image: very subtle, revealed when idle ── */}
+      <motion.div
+        className="absolute inset-0 pointer-events-none"
+        style={{ zIndex: 1 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: showHero ? 0.13 : 0.06 }}
+        transition={{ duration: 2.5, ease: 'easeInOut' }}
+      >
+        <img
+          src="/legacy-hero.jpg"
+          alt=""
+          className="w-full h-full object-cover object-center"
+          style={{ mixBlendMode: 'luminosity' }}
+        />
+        {/* Heavy vignette — let the 3D scene breathe */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              'radial-gradient(ellipse 60% 50% at 50% 50%, rgba(10,10,10,0.1) 0%, rgba(10,10,10,0.75) 65%, rgba(10,10,10,0.95) 100%)',
+          }}
+        />
+      </motion.div>
+
       <Header count={recordings.length} />
 
       {/* Full-screen Three.js canvas */}
-      <div className="absolute inset-0 pt-16">
+      <div className="absolute inset-0 pt-16" style={{ zIndex: 2 }}>
         {!isLoading && (
           <NFormation recordings={recordings} />
         )}
