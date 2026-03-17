@@ -1,0 +1,187 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --gold: #c9a84c;
+  --gold-light: #e6c96d;
+  --gold-dark: #a07832;
+  --black: #0a0a0a;
+  --dark: #141414;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  background: #0a0a0a;
+  color: white;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Glass morphism */
+.glass {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(201, 168, 76, 0.18);
+}
+
+.glass-dark {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(201, 168, 76, 0.12);
+}
+
+.glass-gold {
+  background: rgba(201, 168, 76, 0.08);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(201, 168, 76, 0.3);
+}
+
+/* Gold shimmer text */
+.gold-text {
+  background: linear-gradient(
+    90deg,
+    #a07832 0%,
+    #c9a84c 25%,
+    #e6c96d 50%,
+    #c9a84c 75%,
+    #a07832 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gold-text-animated {
+  background: linear-gradient(
+    90deg,
+    #a07832 0%,
+    #c9a84c 25%,
+    #e6c96d 50%,
+    #c9a84c 75%,
+    #a07832 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 3s linear infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 0% center; }
+  100% { background-position: 200% center; }
+}
+
+/* Glows */
+.gold-glow {
+  box-shadow: 0 0 20px rgba(201, 168, 76, 0.35), 0 0 60px rgba(201, 168, 76, 0.15);
+}
+
+.gold-glow-sm {
+  box-shadow: 0 0 10px rgba(201, 168, 76, 0.3);
+}
+
+/* Record button pulse */
+@keyframes record-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(201, 68, 68, 0.5), 0 0 20px rgba(201, 68, 68, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 16px rgba(201, 68, 68, 0), 0 0 40px rgba(201, 68, 68, 0.4);
+  }
+}
+
+.record-pulse {
+  animation: record-pulse 1.5s ease-in-out infinite;
+}
+
+/* Waveform bars */
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.3); }
+  50% { transform: scaleY(1); }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(201, 168, 76, 0.4);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c9a84c;
+}
+
+/* Page backgrounds */
+.page-bg {
+  background: radial-gradient(ellipse at 50% 0%, rgba(201, 168, 76, 0.06) 0%, transparent 70%),
+              radial-gradient(ellipse at 0% 100%, rgba(201, 168, 76, 0.03) 0%, transparent 50%),
+              #0a0a0a;
+  min-height: 100vh;
+}
+
+/* Input styles */
+.gold-input {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(201, 168, 76, 0.25);
+  color: white;
+  transition: all 0.2s ease;
+}
+
+.gold-input:focus {
+  outline: none;
+  border-color: rgba(201, 168, 76, 0.6);
+  box-shadow: 0 0 0 3px rgba(201, 168, 76, 0.1);
+  background: rgba(201, 168, 76, 0.05);
+}
+
+.gold-input::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+/* Button base */
+.btn-gold {
+  background: linear-gradient(135deg, #a07832, #c9a84c, #e6c96d, #c9a84c, #a07832);
+  background-size: 200% auto;
+  color: #0a0a0a;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  transition: all 0.3s ease;
+}
+
+.btn-gold:hover {
+  background-position: right center;
+  box-shadow: 0 0 30px rgba(201, 168, 76, 0.5);
+  transform: translateY(-1px);
+}
+
+.btn-gold:active {
+  transform: translateY(0);
+}
+
+/* Noise texture overlay */
+.noise-overlay::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.4;
+}
