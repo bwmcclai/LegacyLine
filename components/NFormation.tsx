@@ -599,6 +599,10 @@ function SelectedCard({
       ctx.resume().catch(console.error)
     }
 
+    // Force volume to 1 and ensure it's unmuted
+    audio.volume = 1
+    audio.muted = false
+
     let source = audioSourceMap.get(audio)
     if (!source) {
       source = ctx.createMediaElementSource(audio)
@@ -623,7 +627,25 @@ function SelectedCard({
     audio.addEventListener('loadedmetadata', onLoad)
     audio.addEventListener('ended', onEnd)
 
-    audio.play().then(() => onPlaying(true)).catch(console.error)
+    let playPromise: Promise<void> | null = null
+
+    const handlePlay = async () => {
+      try {
+        // Redundant wake-up call for Mac
+        if (ctx.state === 'suspended') await ctx.resume()
+        
+        playPromise = audio.play()
+        await playPromise
+        onPlaying(true)
+        
+        // Final verification check for output
+        if (ctx.state === 'suspended') ctx.resume()
+      } catch (e: any) {
+        if (e.name !== 'AbortError') console.error('[Audio] Play failed:', e)
+      }
+    }
+
+    handlePlay()
 
     return () => {
       if (analyserRef.current === analyser) {
@@ -633,7 +655,18 @@ function SelectedCard({
       audio.removeEventListener('timeupdate', onTime)
       audio.removeEventListener('loadedmetadata', onLoad)
       audio.removeEventListener('ended', onEnd)
-      audio.pause()
+      
+      // Prevent AbortError: check play promise before pausing
+      if (playPromise) {
+        playPromise.then(() => {
+          audio.pause()
+        }).catch(() => {
+          // Play was already aborted or failed
+        })
+      } else {
+        audio.pause()
+      }
+
       try {
         source?.disconnect(analyser)
         analyser.disconnect()
@@ -662,7 +695,11 @@ function SelectedCard({
       exit={{ opacity: 0, y: -20, scale: 0.95 }}
       transition={{ duration: 0.45, type: 'spring', stiffness: 140, damping: 20 }}
     >
-      <audio ref={audioRef} src={recording.audio_url} />
+      <audio 
+        ref={audioRef} 
+        src={recording.audio_url} 
+        crossOrigin="anonymous"
+      />
 
       <div
         style={{
@@ -782,10 +819,18 @@ export default function NFormation({ recordings }: { recordings: Recording[] }) 
   const orbitRef = useRef<any>(null)
 
   const handleSelect = useCallback((rec: Recording, worldPos: THREE.Vector3) => {
-    // Resume context on user click to satisfy browser autoplay policies
-    if (sharedAudioCtx && sharedAudioCtx.state === 'suspended') {
-      sharedAudioCtx.resume().catch(console.error)
+    // 1. Critical gesture: Resume/Initialize context on user click
+    if (!sharedAudioCtx) {
+      const Ctor = window.AudioContext || (window as any).webkitAudioContext
+      if (Ctor) sharedAudioCtx = new Ctor()
     }
+    
+    if (sharedAudioCtx && sharedAudioCtx.state === 'suspended') {
+      sharedAudioCtx.resume().then(() => {
+        console.log('[Audio] Context resumed successfully')
+      }).catch(console.error)
+    }
+    
     setSelectedRecording(rec)
     setSelectedWorldPos(worldPos)
   }, [])

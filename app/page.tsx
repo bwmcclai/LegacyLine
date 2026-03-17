@@ -150,7 +150,7 @@ function HeroText({ visible }: { visible: boolean }) {
             style={{ background: 'linear-gradient(to bottom, transparent, rgba(201,168,76,0.4))' }}
           />
           <p className="text-white/30 text-xs tracking-[0.3em] uppercase">
-            Noblesville Seniors · Class of 2026
+            Class of 2026 * Class of 2034
           </p>
         </motion.div>
       )}
@@ -168,25 +168,9 @@ function EmptyState() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.5, duration: 0.8 }}
       >
-        <div
-          className="w-24 h-24 rounded-3xl mx-auto mb-6 flex items-center justify-center"
-          style={{
-            background: 'rgba(201,168,76,0.06)',
-            border: '1px solid rgba(201,168,76,0.2)',
-          }}
-        >
-          <span className="text-5xl font-black gold-text" style={{ fontFamily: 'Georgia, serif' }}>
-            N
-          </span>
-        </div>
-        <h2
-          className="text-2xl font-bold gold-text mb-3"
-          style={{ fontFamily: 'Georgia, serif' }}
-        >
-          Legacy Line
-        </h2>
+
         <p className="text-white/40 text-sm leading-relaxed max-w-xs mx-auto">
-          No messages yet. Noblesville seniors — scan the recording tag to leave your legacy for the Class of 2030!
+          No messages yet.
         </p>
       </motion.div>
     </div>

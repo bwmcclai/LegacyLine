@@ -17,10 +17,16 @@ export async function getRecordings(): Promise<Recording[]> {
 }
 
 export async function uploadAudio(blob: Blob): Promise<string> {
-  const fileName = `audio-${Date.now()}-${Math.random().toString(36).slice(2)}.webm`
+  const ext = blob.type.split('/')[1]?.split(';')[0] || 'webm'
+  const fileName = `audio-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+  
   const { error } = await supabase.storage
     .from('legacy-audio')
-    .upload(fileName, blob, { contentType: 'audio/webm' })
+    .upload(fileName, blob, { 
+      contentType: blob.type || 'audio/webm',
+      cacheControl: '3600',
+      upsert: false
+    })
 
   if (error) throw error
 

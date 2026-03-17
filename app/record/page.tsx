@@ -4,14 +4,15 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion'
 import { uploadAudio, uploadSelfie, saveRecording } from '@/lib/supabase'
 
-type Step = 'intro' | 'recording' | 'review' | 'details' | 'success'
-const MAX_SECONDS = 20
+type Step = 'intro' | 'setup' | 'recording' | 'review' | 'details' | 'success'
+const MAX_SECONDS = 30
 
 // ─── Hero background image (the torch-passing particle art) ──────────
 function HeroBg({ step }: { step: Step }) {
   // Opacity varies by step: rich on intro/success, subtle when recording
   const opacityMap: Record<Step, number> = {
     intro: 0.32,
+    setup: 0.20,
     recording: 0.10,
     review: 0.16,
     details: 0.16,
@@ -91,27 +92,36 @@ function GoldField() {
         />
       ))}
       {/* Rising gold sparks */}
-      {[...Array(16)].map((_, i) => (
+      {[...Array(24)].map((_, i) => (
         <motion.div
           key={i}
           className="absolute rounded-full"
           style={{
-            left: `${6 + i * 6}%`,
+            left: `${4 + i * 4}%`,
             bottom: 0,
-            width: i % 4 === 0 ? 3 : 2,
-            height: i % 4 === 0 ? 3 : 2,
-            background: '#c9a84c',
-            boxShadow: '0 0 4px rgba(201,168,76,0.8)',
+            width: i % 3 === 0 ? 4 : 2,
+            height: i % 3 === 0 ? 4 : 2,
+            background: 'linear-gradient(to top, #c9a84c, #f5e08a)',
+            boxShadow: '0 0 8px rgba(201,168,76,0.6)',
           }}
-          animate={{ y: [0, -(300 + Math.random() * 400)], opacity: [0, 0.7, 0.4, 0] }}
+          animate={{
+            y: [0, -(400 + Math.random() * 500)],
+            x: [0, (Math.random() - 0.5) * 40],
+            opacity: [0, 0.8, 0.4, 0],
+          }}
           transition={{
-            duration: 8 + i * 0.7,
-            delay: i * 0.9,
+            duration: 10 + i * 0.5,
+            delay: i * 0.4,
             repeat: Infinity,
             ease: 'easeOut',
           }}
         />
       ))}
+      
+      {/* Passing the Torch - Subtle Miller 'N' watermark */}
+      <div className="absolute inset-0 flex items-center justify-center opacity-[0.03] pointer-events-none">
+        <span style={{ fontSize: '40vw', fontWeight: 900, fontFamily: 'Georgia, serif', color: '#c9a84c' }}>N</span>
+      </div>
     </div>
   )
 }
@@ -262,6 +272,8 @@ export default function RecordPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [waveform, setWaveform] = useState<number[]>(Array(50).fill(0.05))
   const [showCamera, setShowCamera] = useState(false)
+  const [isPaused, setIsPaused] = useState(false)
+  const [micStream, setMicStream] = useState<MediaStream | null>(null)
 
   const mrRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -283,13 +295,38 @@ export default function RecordPage() {
     camStreamRef.current?.getTracks().forEach((t) => t.stop())
   }
 
-  const startRecording = useCallback(async () => {
+  const stopRecording = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current)
+    if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
+    setIsRecording(false)
+  }, [])
+
+  const togglePause = () => {
+    if (!mrRef.current) return
+    if (isPaused) {
+      mrRef.current.resume()
+      setIsPaused(false)
+    } else {
+      mrRef.current.pause()
+      setIsPaused(true)
+    }
+  }
+
+  const prepareMic = useCallback(async () => {
+    if (streamRef.current) return
     setErrorMsg(null)
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: { 
+          echoCancellation: true, 
+          noiseSuppression: true,
+          autoGainControl: true 
+        } 
+      })
       streamRef.current = stream
+      setMicStream(stream)
 
-      const ctx = new AudioContext()
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
       audioCtxRef.current = ctx
       const src = ctx.createMediaStreamSource(stream)
       const analyser = ctx.createAnalyser()
@@ -305,56 +342,107 @@ export default function RecordPage() {
         animRef.current = requestAnimationFrame(draw)
       }
       draw()
+      setStep('setup')
+    } catch (err: any) {
+      console.error(err)
+      setErrorMsg('Microphone access is required to record your message.')
+    }
+  }, [])
+
+  const startRecording = useCallback(async () => {
+    // 1. Teardown preview stream to release hardware
+    if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop())
+        streamRef.current = null
+    }
+    setErrorMsg(null)
+    
+    try {
+      // 2. Request a dedicated fresh stream for recording
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      setMicStream(stream)
+
+      // 3. Re-connect visualizer to the new stream
+      if (audioCtxRef.current) {
+        const src = audioCtxRef.current.createMediaStreamSource(stream)
+        const analyser = audioCtxRef.current.createAnalyser()
+        analyser.fftSize = 128
+        src.connect(analyser)
+        analyserRef.current = analyser
+      }
 
       const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
-        : 'audio/webm'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : 'audio/mp4'
+
+      console.log(`[Recorder] Initialized with ${mime}. Stream active: ${stream.active}`)
+
       const mr = new MediaRecorder(stream, { mimeType: mime })
       mrRef.current = mr
       chunksRef.current = []
-      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+      
+      mr.ondataavailable = (e) => { 
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data)
+        }
+      }
+
       mr.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: mime })
+        console.log(`[Recorder] Finalized. Size: ${Math.round(blob.size / 1024)}KB, Type: ${mime}`)
+        
         setAudioBlob(blob)
         setAudioUrl(URL.createObjectURL(blob))
-        stream.getTracks().forEach((t) => t.stop())
+        
+        setTimeout(() => {
+          stream.getTracks().forEach((t) => t.stop())
+          setMicStream(null)
+        }, 200)
+
         cancelAnimationFrame(animRef.current)
         setWaveform(Array(50).fill(0.05))
         setStep('review')
       }
-      mr.start(100)
-      setIsRecording(true)
-      setStep('recording')
-      setSecondsLeft(MAX_SECONDS)
-      setSecondsRecorded(0)
 
-      let elapsed = 0
-      timerRef.current = setInterval(() => {
-        elapsed++
-        setSecondsRecorded(elapsed)
-        setSecondsLeft(MAX_SECONDS - elapsed)
-        if (elapsed >= MAX_SECONDS) stopRecording()
-      }, 1000)
+      // 4. Stabilize hardware before starting
+      setTimeout(() => {
+        if (mr.state === 'inactive' && stream.active) {
+          mr.start(250) 
+          setIsRecording(true)
+          setIsPaused(false)
+          setStep('recording')
+          setSecondsLeft(MAX_SECONDS)
+          setSecondsRecorded(0)
+
+          let elapsed = 0
+          timerRef.current = setInterval(() => {
+            if (!isPaused) {
+              elapsed++
+              setSecondsRecorded(elapsed)
+              setSecondsLeft(MAX_SECONDS - elapsed)
+              if (elapsed >= MAX_SECONDS) stopRecording()
+            }
+          }, 1000)
+        } else {
+          setErrorMsg('Recorder failed to initialize. Please refresh and try again.')
+        }
+      }, 500)
+
     } catch (err: any) {
-      setErrorMsg(
-        err?.name === 'NotAllowedError'
-          ? 'Please allow microphone access and try again.'
-          : 'Could not start recording. Check your microphone.'
-      )
+      console.error(err)
+      setErrorMsg('Recording failed to start. Please check your microphone permissions.')
     }
-  }, [])
+  }, [isPaused, stopRecording])
 
-  const stopRecording = useCallback(() => {
-    if (timerRef.current) clearInterval(timerRef.current)
-    if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
-    setIsRecording(false)
-  }, [])
-
-  const resetRecording = () => {
+  function resetRecording() {
     if (audioUrl) URL.revokeObjectURL(audioUrl)
     setAudioBlob(null); setAudioUrl(null)
     setSecondsRecorded(0); setSecondsLeft(MAX_SECONDS)
     setWaveform(Array(50).fill(0.05))
+    setIsPaused(false)
     setStep('intro')
   }
 
@@ -395,34 +483,6 @@ export default function RecordPage() {
       setErrorMsg(err?.message || 'Submission failed. Please try again.')
     } finally { setIsSubmitting(false) }
   }
-
-  // ─── Shared glass card wrapper ───────────────────────────────────────
-  const CardWrap = ({ children, className = '' }: { children: React.ReactNode; className?: string }) => (
-    <motion.div
-      className={`relative z-10 w-full max-w-md mx-auto ${className}`}
-      style={{
-        background: 'rgba(8,6,0,0.7)',
-        backdropFilter: 'blur(32px)',
-        WebkitBackdropFilter: 'blur(32px)',
-        border: '1px solid rgba(201,168,76,0.18)',
-        borderRadius: '28px',
-        overflow: 'hidden',
-      }}
-      initial={{ opacity: 0, y: 32, scale: 0.96 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -20, scale: 0.96 }}
-      transition={{ duration: 0.5, type: 'spring', stiffness: 130, damping: 22 }}
-    >
-      {/* Top gold shimmer line */}
-      <div
-        style={{
-          position: 'absolute', top: 0, left: 0, right: 0, height: '1px',
-          background: 'linear-gradient(90deg, transparent 0%, rgba(201,168,76,0.6) 50%, transparent 100%)',
-        }}
-      />
-      {children}
-    </motion.div>
-  )
 
   return (
     <div
@@ -493,12 +553,12 @@ export default function RecordPage() {
                   style={{ fontFamily: 'Georgia, serif' }}
                 >
                   Your voice will carry on<br />
-                  <span style={{ color: '#e6c96d' }}>for the class of 2034</span>
+                  <span style={{ color: '#e6c96d', textShadow: '0 0 15px rgba(230,201,109,0.3)' }}>for the class of 2034</span>
                 </h2>
-                <p className="text-sm leading-relaxed" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                <p className="text-sm leading-relaxed max-w-[90%] mx-auto" style={{ color: 'rgba(255,255,255,0.6)' }}>
                   Today, you walk the same halls as the 5th graders heading to Noblesville Middle School.
-                  Leave them a message they'll remember — your words become part of the{' '}
-                  <span style={{ color: 'rgba(201,168,76,0.85)' }}>Miller legacy</span>.
+                  Leave them a message they&apos;ll remember — your words become part of the{' '}
+                  <span style={{ color: 'rgba(201,168,76,0.95)', fontWeight: 600 }}>Miller legacy</span>.
                 </p>
               </motion.div>
 
@@ -563,25 +623,92 @@ export default function RecordPage() {
               )}
 
               <motion.button
-                onClick={startRecording}
-                className="w-full py-4 rounded-2xl font-bold text-sm uppercase tracking-widest relative overflow-hidden"
+                onClick={prepareMic}
+                className="w-full py-4 rounded-2xl font-bold text-sm uppercase tracking-widest relative overflow-hidden group"
                 style={{
-                  background: 'linear-gradient(135deg, #9a7030, #c9a84c, #e6c96d, #c9a84c, #9a7030)',
-                  backgroundSize: '200% auto',
-                  color: '#0a0a0a',
-                  boxShadow: '0 0 30px rgba(201,168,76,0.35), 0 4px 20px rgba(0,0,0,0.3)',
-                  animation: 'shimmer 3s linear infinite',
+                  background: 'linear-gradient(135deg, #0a0a0a, #1a1a1a)',
+                  border: '1px solid rgba(201,168,76,0.3)',
+                  color: '#c9a84c',
+                  boxShadow: '0 0 30px rgba(201,168,76,0.1)',
                 }}
-                whileHover={{ scale: 1.02, boxShadow: '0 0 50px rgba(201,168,76,0.55)' }}
+                whileHover={{ scale: 1.02, background: 'linear-gradient(135deg, #1a1a1a, #252525)', borderColor: 'rgba(201,168,76,0.6)' }}
                 whileTap={{ scale: 0.97 }}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.7 }}
               >
-                <span className="flex items-center justify-center gap-2">
-                  <span>🎙</span> Begin Recording
+                <motion.div
+                  className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                  style={{ background: 'linear-gradient(90deg, transparent, rgba(201,168,76,0.1), transparent)', skewX: '-20deg' }}
+                  animate={{ x: ['-100%', '200%'] }}
+                  transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
+                />
+                <span className="flex items-center justify-center gap-3">
+                  <span className="text-lg">🎙</span> Record My Legacy
                 </span>
               </motion.button>
+            </div>
+          </CardWrap>
+        )}
+
+        {/* ═══ SETUP ═══ */}
+        {step === 'setup' && (
+          <CardWrap key="setup">
+            <div className="p-8 text-center min-h-[440px] flex flex-col justify-center">
+              <div className="mb-8">
+                <h2 className="text-2xl font-bold mb-2" style={{ fontFamily: 'Georgia, serif', color: '#e6c96d' }}>
+                  Ready to share?
+                </h2>
+                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                  Test your levels before your recording begins.
+                </p>
+              </div>
+
+              {/* Live waveform for feedback */}
+              <div
+                className="rounded-2xl p-6 mb-8"
+                style={{ background: 'rgba(201,168,76,0.04)', border: '1px solid rgba(201,168,76,0.15)' }}
+              >
+                <LiveWaveform data={waveform} active={true} />
+                <p className="text-[10px] tracking-widest uppercase mt-4" style={{ color: '#c9a84c' }}>
+                  Microphone Active
+                </p>
+              </div>
+
+              {errorMsg && (
+                <div className="rounded-xl p-3 mb-4 text-xs text-red-300" style={{ background: 'rgba(200,40,40,0.1)', border: '1px solid rgba(200,40,40,0.25)' }}>
+                  {errorMsg}
+                </div>
+              )}
+
+              <motion.button
+                onClick={startRecording}
+                className="w-full py-5 rounded-2xl font-bold text-sm uppercase tracking-widest relative overflow-hidden group"
+                style={{
+                  background: 'linear-gradient(135deg, #9a1a1a, #ef4444)',
+                  color: 'white',
+                  boxShadow: '0 0 30px rgba(239,68,68,0.2)'
+                }}
+                whileHover={{ scale: 1.02, boxShadow: '0 0 40px rgba(239,68,68,0.4)' }}
+                whileTap={{ scale: 0.97 }}
+              >
+                <span className="flex items-center justify-center gap-3">
+                  <span className="w-4 h-4 rounded-full bg-white animate-pulse" />
+                  Start Recording
+                </span>
+              </motion.button>
+
+              <button
+                onClick={() => {
+                  streamRef.current?.getTracks().forEach(t => t.stop());
+                  setMicStream(null);
+                  setStep('intro');
+                }}
+                className="mt-6 text-xs uppercase tracking-widest font-bold opacity-30 hover:opacity-60 transition-opacity"
+                style={{ color: '#c9a84c' }}
+              >
+                ← Back
+              </button>
             </div>
           </CardWrap>
         )}
@@ -589,65 +716,83 @@ export default function RecordPage() {
         {/* ═══ RECORDING ═══ */}
         {step === 'recording' && (
           <CardWrap key="recording">
-            <div className="p-8 text-center">
-              {/* Live indicator */}
+            <div className="p-8 text-center min-h-[440px] flex flex-col justify-center">
               <motion.div
-                className="flex items-center justify-center gap-2 mb-6"
+                key="active"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
+                className="w-full"
               >
-                <motion.div
-                  className="w-2.5 h-2.5 rounded-full"
-                  style={{ background: '#ef4444' }}
-                  animate={{ opacity: [1, 0.3, 1], scale: [1, 0.85, 1] }}
-                  transition={{ duration: 1.2, repeat: Infinity }}
-                />
-                <span className="text-[11px] tracking-[0.3em] uppercase font-bold text-red-400">Recording</span>
-              </motion.div>
-
-              {/* Countdown ring */}
-              <div className="relative w-36 h-36 mx-auto mb-5 flex items-center justify-center">
-                <CountdownRing seconds={secondsLeft} max={MAX_SECONDS} />
-                <div className="relative z-10 text-center">
-                  <p className="text-4xl font-black tabular-nums leading-none" style={{ color: '#e6c96d', fontFamily: 'Georgia, serif', textShadow: '0 0 20px rgba(201,168,76,0.5)' }}>
-                    {secondsLeft}
-                  </p>
-                  <p className="text-[10px] tracking-widest uppercase mt-1" style={{ color: 'rgba(255,255,255,0.3)' }}>seconds</p>
+                {/* Live indicator */}
+                <div className="flex items-center justify-center gap-2 mb-6">
+                  <motion.div
+                    className="w-2.5 h-2.5 rounded-full"
+                    style={{ background: isPaused ? 'rgba(201,168,76,0.5)' : '#ef4444' }}
+                    animate={isPaused ? {} : { opacity: [1, 0.3, 1], scale: [1, 0.85, 1] }}
+                    transition={{ duration: 1.2, repeat: Infinity }}
+                  />
+                  <span className={`text-[11px] tracking-[0.3em] uppercase font-bold ${isPaused ? 'text-amber-500/60' : 'text-red-400'}`}>
+                    {isPaused ? 'Paused' : 'Recording Now'}
+                  </span>
                 </div>
-              </div>
 
-              {/* Waveform */}
-              <div
-                className="rounded-2xl p-4 mb-5"
-                style={{ background: 'rgba(201,168,76,0.04)', border: '1px solid rgba(201,168,76,0.1)' }}
-              >
-                <LiveWaveform data={waveform} active={isRecording} />
-                <p className="text-[10px] tracking-widest uppercase mt-2" style={{ color: 'rgba(201,168,76,0.4)' }}>
-                  Live · Speak naturally
+                {/* Countdown ring */}
+                <div className="relative w-36 h-36 mx-auto mb-5 flex items-center justify-center">
+                  <CountdownRing seconds={secondsLeft} max={MAX_SECONDS} />
+                  <div className="relative z-10 text-center">
+                    <p className="text-4xl font-black tabular-nums leading-none" style={{ color: '#e6c96d', fontFamily: 'Georgia, serif', textShadow: '0 0 20px rgba(201,168,76,0.5)' }}>
+                      {secondsLeft}
+                    </p>
+                    <p className="text-[10px] tracking-widest uppercase mt-1" style={{ color: 'rgba(255,255,255,0.3)' }}>seconds</p>
+                  </div>
+                </div>
+
+                {/* Waveform */}
+                <div
+                  className="rounded-2xl p-4 mb-5"
+                  style={{ background: 'rgba(201,168,76,0.04)', border: '1px solid rgba(201,168,76,0.1)' }}
+                >
+                  <LiveWaveform data={waveform} active={isRecording && !isPaused} />
+                  <p className="text-[10px] tracking-widest uppercase mt-2" style={{ color: 'rgba(201,168,76,0.4)' }}>
+                    {isPaused ? 'Recording Paused' : 'Live · Speak naturally'}
+                  </p>
+                </div>
+
+                <p className="text-sm mb-6" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                  Sharing your vision for the Class of 2034.
                 </p>
-              </div>
 
-              <p className="text-sm mb-6" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                Share your wisdom for the next generation of Millers
-              </p>
-
-              <motion.button
-                onClick={stopRecording}
-                className="w-full py-4 rounded-2xl font-bold text-sm uppercase tracking-widest"
-                style={{
-                  background: 'rgba(239,68,68,0.15)',
-                  border: '1px solid rgba(239,68,68,0.4)',
-                  color: '#fca5a5',
-                  boxShadow: '0 0 20px rgba(239,68,68,0.15)',
-                }}
-                whileHover={{ background: 'rgba(239,68,68,0.25)', scale: 1.01 }}
-                whileTap={{ scale: 0.97 }}
-              >
-                <span className="flex items-center justify-center gap-2">
-                  <span className="w-3 h-3 rounded bg-red-400 inline-block" />
-                  Stop Recording
-                </span>
-              </motion.button>
+                <div className="flex gap-3">
+                  <button
+                    onClick={togglePause}
+                    className="flex-1 py-4 rounded-2xl font-bold text-xs uppercase tracking-widest transition-all"
+                    style={{
+                      background: 'rgba(201,168,76,0.08)',
+                      border: '1px solid rgba(201,168,76,0.2)',
+                      color: '#e6c96d'
+                    }}
+                  >
+                    {isPaused ? '▶ Resume' : '‖ Pause'}
+                  </button>
+                  <motion.button
+                    onClick={stopRecording}
+                    className="flex-[2] py-4 rounded-2xl font-bold text-xs uppercase tracking-widest"
+                    style={{
+                      background: 'rgba(239,68,68,0.15)',
+                      border: '1px solid rgba(239,68,68,0.4)',
+                      color: '#fca5a5',
+                      boxShadow: '0 0 20px rgba(239,68,68,0.15)',
+                    }}
+                    whileHover={{ background: 'rgba(239,68,68,0.25)', scale: 1.01 }}
+                    whileTap={{ scale: 0.97 }}
+                  >
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-[2px] bg-red-400 inline-block" />
+                      Complete
+                    </span>
+                  </motion.button>
+                </div>
+              </motion.div>
             </div>
           </CardWrap>
         )}
@@ -680,9 +825,22 @@ export default function RecordPage() {
                   <audio
                     src={audioUrl}
                     controls
+                    autoPlay
+                    onLoadedMetadata={(e) => {
+                      const audio = e.currentTarget
+                      audio.volume = 1
+                      audio.muted = false
+                      audio.play().catch(err => {
+                        if (err.name !== 'AbortError') console.warn('[Review] Auto-play blocked:', err)
+                      })
+                    }}
                     className="w-full"
                     style={{ filter: 'invert(1) hue-rotate(180deg) brightness(0.85)' }}
                   />
+                  {/* Real-time review visualizer */}
+                  <div className="mt-4 flex justify-center opacity-60">
+                     <SoundWave active />
+                  </div>
                 </div>
               )}
 
@@ -927,8 +1085,38 @@ export default function RecordPage() {
         animate={{ opacity: 1 }}
         transition={{ delay: 1.1 }}
       >
-        Noblesville Schools · Class of 2025 · Legacy Line
+        Noblesville Schools · Class of 2026 · Legacy Line
       </motion.p>
     </div>
+  )
+}
+
+// ─── Shared glass card wrapper ───────────────────────────────────────
+function CardWrap({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return (
+    <motion.div
+      className={`relative z-10 w-full max-w-md mx-auto ${className}`}
+      style={{
+        background: 'rgba(8,6,0,0.7)',
+        backdropFilter: 'blur(32px)',
+        WebkitBackdropFilter: 'blur(32px)',
+        border: '1px solid rgba(201,168,76,0.18)',
+        borderRadius: '28px',
+        overflow: 'hidden',
+      }}
+      initial={{ opacity: 0, y: 32, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -20, scale: 0.96 }}
+      transition={{ duration: 0.5, type: 'spring', stiffness: 130, damping: 22 }}
+    >
+      {/* Top gold shimmer line */}
+      <div
+        style={{
+          position: 'absolute', top: 0, left: 0, right: 0, height: '1px',
+          background: 'linear-gradient(90deg, transparent 0%, rgba(201,168,76,0.6) 50%, transparent 100%)',
+        }}
+      />
+      {children}
+    </motion.div>
   )
 }
