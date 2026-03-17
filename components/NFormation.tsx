@@ -582,22 +582,28 @@ function SelectedCard({
   const audioRef = useRef<HTMLAudioElement>(null)
   const [progress, setProgress] = useState(0)
   const [duration, setDuration] = useState(0)
+  const [needsTap, setNeedsTap] = useState(false)
+
+  // Called both from the effect (auto-play attempt) and from the tap-to-play button
+  const tryPlay = useCallback(() => {
+    const audio = audioRef.current
+    if (!audio) return
+    if (sharedAudioCtx?.state === 'suspended') {
+      sharedAudioCtx.resume().catch(console.error)
+    }
+    audio.play()
+      .then(() => { onPlaying(true); setNeedsTap(false) })
+      .catch(() => setNeedsTap(true))
+  }, [onPlaying])
 
   useEffect(() => {
     const audio = audioRef.current
-    if (!audio) return
-
-    if (!sharedAudioCtx) {
-      const Ctor = window.AudioContext || (window as any).webkitAudioContext
-      if (Ctor) sharedAudioCtx = new Ctor()
-    }
-
-    if (!sharedAudioCtx) return
+    // sharedAudioCtx was already created in handleSelect (user gesture).
+    // If for some reason it's still null, bail — we can't proceed without it.
+    if (!audio || !sharedAudioCtx) return
     const ctx = sharedAudioCtx
 
-    if (ctx.state === 'suspended') {
-      ctx.resume().catch(console.error)
-    }
+    if (ctx.state === 'suspended') ctx.resume().catch(console.error)
 
     let source = audioSourceMap.get(audio)
     if (!source) {
@@ -605,14 +611,10 @@ function SelectedCard({
       audioSourceMap.set(audio, source)
     }
 
-    // Create analyser for this instance
     const analyser = ctx.createAnalyser()
     analyser.fftSize = 256
-
-    // Connect source -> analyser -> destination
     source.connect(analyser)
     analyser.connect(ctx.destination)
-
     analyserRef.current = analyser
 
     const onTime = () => setProgress(audio.currentTime / (audio.duration || 1))
@@ -623,25 +625,21 @@ function SelectedCard({
     audio.addEventListener('loadedmetadata', onLoad)
     audio.addEventListener('ended', onEnd)
 
-    audio.play().then(() => onPlaying(true)).catch(console.error)
+    // Attempt auto-play; on iOS this may fail — we'll show a tap-to-play button instead
+    audio.play()
+      .then(() => { onPlaying(true); setNeedsTap(false) })
+      .catch(() => setNeedsTap(true))
 
     return () => {
-      if (analyserRef.current === analyser) {
-        analyserRef.current = null
-      }
+      if (analyserRef.current === analyser) analyserRef.current = null
       onPlaying(false)
       audio.removeEventListener('timeupdate', onTime)
       audio.removeEventListener('loadedmetadata', onLoad)
       audio.removeEventListener('ended', onEnd)
       audio.pause()
-      try {
-        source?.disconnect(analyser)
-        analyser.disconnect()
-      } catch (e) {
-        // Ignore disconnect errors
-      }
+      try { source?.disconnect(analyser); analyser.disconnect() } catch {}
     }
-  }, [recording.id, onStop, onPlaying, analyserRef])
+  }, [recording.id, onStop, onPlaying, analyserRef, tryPlay])
 
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 
@@ -757,17 +755,39 @@ function SelectedCard({
           </div>
         </div>
 
-        {/* Live waveform indicator dots */}
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '4px', marginTop: '12px' }}>
-          {[...Array(5)].map((_, i) => (
-            <motion.div
-              key={i}
-              style={{ width: 4, borderRadius: 2, background: '#c9a84c' }}
-              animate={{ height: [4, 14 + i * 2, 4] }}
-              transition={{ duration: 0.6 + i * 0.1, repeat: Infinity, ease: 'easeInOut', delay: i * 0.1 }}
-            />
-          ))}
-        </div>
+        {/* Tap-to-play fallback (shown when autoplay is blocked by the browser) */}
+        {needsTap ? (
+          <button
+            onClick={tryPlay}
+            style={{
+              marginTop: '12px',
+              width: '100%',
+              padding: '10px',
+              borderRadius: '12px',
+              background: 'linear-gradient(135deg, #9a7030, #c9a84c, #e6c96d)',
+              color: '#0a0a0a',
+              fontWeight: '700',
+              fontSize: '13px',
+              letterSpacing: '0.08em',
+              cursor: 'pointer',
+              border: 'none',
+            }}
+          >
+            ▶ Tap to Play
+          </button>
+        ) : (
+          /* Live waveform indicator dots */
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '4px', marginTop: '12px' }}>
+            {[...Array(5)].map((_, i) => (
+              <motion.div
+                key={i}
+                style={{ width: 4, borderRadius: 2, background: '#c9a84c' }}
+                animate={{ height: [4, 14 + i * 2, 4] }}
+                transition={{ duration: 0.6 + i * 0.1, repeat: Infinity, ease: 'easeInOut', delay: i * 0.1 }}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </motion.div>
   )
@@ -782,8 +802,14 @@ export default function NFormation({ recordings }: { recordings: Recording[] }) 
   const orbitRef = useRef<any>(null)
 
   const handleSelect = useCallback((rec: Recording, worldPos: THREE.Vector3) => {
-    // Resume context on user click to satisfy browser autoplay policies
-    if (sharedAudioCtx && sharedAudioCtx.state === 'suspended') {
+    // Create & resume AudioContext during the user gesture — required on iOS Safari.
+    // If created later (e.g. in a useEffect) the context starts suspended and all
+    // audio routed through it is silently muted.
+    if (!sharedAudioCtx) {
+      const Ctor = window.AudioContext || (window as any).webkitAudioContext
+      if (Ctor) sharedAudioCtx = new Ctor()
+    }
+    if (sharedAudioCtx?.state === 'suspended') {
       sharedAudioCtx.resume().catch(console.error)
     }
     setSelectedRecording(rec)
