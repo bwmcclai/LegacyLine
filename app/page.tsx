@@ -126,13 +126,12 @@ function InstructionToast({ onDismiss }: { onDismiss: () => void }) {
       className="fixed z-40 left-1/2"
       style={{
         bottom: 'calc(env(safe-area-inset-bottom, 0px) + 108px)',
-        transform: 'translateX(-60%)',
         maxWidth: '290px',
         width: '85%',
       }}
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 16, x: '-50%' }}
+      animate={{ opacity: 1, y: 0, x: '-50%' }}
+      exit={{ opacity: 0, y: 10, x: '-50%' }}
       transition={{ duration: 0.4 }}
     >
       <div
