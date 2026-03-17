@@ -231,29 +231,7 @@ export default function WallPage() {
       className="fixed inset-0 overflow-hidden"
       style={{ background: '#0a0a0a' }}
     >
-      {/* ── Hero image: very subtle, revealed when idle ── */}
-      <motion.div
-        className="absolute inset-0 pointer-events-none"
-        style={{ zIndex: 1 }}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: showHero ? 0.13 : 0.06 }}
-        transition={{ duration: 2.5, ease: 'easeInOut' }}
-      >
-        <img
-          src="/legacy-hero.jpg"
-          alt=""
-          className="w-full h-full object-cover object-center"
-          style={{ mixBlendMode: 'luminosity' }}
-        />
-        {/* Heavy vignette — let the 3D scene breathe */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              'radial-gradient(ellipse 60% 50% at 50% 50%, rgba(10,10,10,0.1) 0%, rgba(10,10,10,0.75) 65%, rgba(10,10,10,0.95) 100%)',
-          }}
-        />
-      </motion.div>
+
 
       <Header count={recordings.length} />
 

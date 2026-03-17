@@ -10,9 +10,9 @@ import type { Recording } from '@/lib/types'
 // ─── Ring configuration ────────────────────────────────────────────────
 // Radii expanded to give the center hero image room to breathe
 const RINGS = [
-  { maxNodes: 6,  radius: 2.8, speed: 0.10,  tiltX:  0.28 },
+  { maxNodes: 6, radius: 2.8, speed: 0.10, tiltX: 0.28 },
   { maxNodes: 12, radius: 4.1, speed: 0.060, tiltX: -0.32 },
-  { maxNodes: 20, radius: 5.4, speed: 0.034, tiltX:  0.18 },
+  { maxNodes: 20, radius: 5.4, speed: 0.034, tiltX: 0.18 },
   { maxNodes: 30, radius: 6.8, speed: 0.020, tiltX: -0.22 },
 ] as const
 
@@ -117,40 +117,48 @@ function useCircularTexture(selfieUrl: string | null, initial: string): THREE.Te
   return texture
 }
 
-// ─── Center Image (hero image as billboard sprite) ─────────────────────
-// Using a Sprite so it always faces the camera — never appears backwards.
-// AdditiveBlending makes the black background invisible, letting gold particles glow.
+// ─── Center Image (hero image as 3D plane) ──────────────────────────────
+// Using a Mesh so it exists in 3D space — as the camera orbits, the plane
+// perspective changes accordingly. AdditiveBlending makes the black background 
+// invisible, letting gold particles glow.
 function CenterImage({ isPlaying }: { isPlaying: boolean }) {
-  const spriteRef = useRef<THREE.Sprite>(null)
+  const meshRef = useRef<THREE.Mesh>(null)
   const [texture, setTexture] = useState<THREE.Texture | null>(null)
 
   useEffect(() => {
-    new THREE.TextureLoader().load('/legacy-hero.jpg', (tex) => {
+    new THREE.TextureLoader().load('/LegacyLine.png', (tex) => {
       tex.colorSpace = THREE.SRGBColorSpace
       setTexture(tex)
     })
   }, [])
 
-  useFrame((state) => {
-    if (!spriteRef.current) return
+  useFrame((state, delta) => {
+    if (!meshRef.current) return
     const t = state.clock.getElapsedTime()
     // Subtle breathing pulse; slightly larger when playing
-    const base = isPlaying ? 5.1 : 4.8
-    const b = base + Math.sin(t * 0.45) * 0.06
-    spriteRef.current.scale.set(b, b, 1)
+    const baseH = isPlaying ? 5.1 : 4.8
+    const baseW = baseH * 0.94
+    const h = baseH + Math.sin(t * 0.45) * 0.06
+    const w = h * 0.94
+    meshRef.current.scale.set(w, h, 1)
+
+    // Match the slowest/inner orbit slightly to give it 3D depth
+    meshRef.current.rotation.y += delta * 0.05
   })
 
   if (!texture) return null
 
   return (
-    <sprite ref={spriteRef} scale={[4.8, 4.8, 1]}>
-      <spriteMaterial
+    <mesh ref={meshRef}>
+      <planeGeometry args={[1, 1]} />
+      <meshBasicMaterial
         map={texture}
         transparent
         blending={THREE.AdditiveBlending}
         depthWrite={false}
+        side={THREE.DoubleSide}
       />
-    </sprite>
+    </mesh>
   )
 }
 
@@ -266,8 +274,8 @@ function RecordingNode({
     gm.opacity = isSelected
       ? 0.55 + Math.abs(Math.sin(t * 3.2 + index * 0.7)) * 0.3
       : hovered
-      ? 0.38
-      : 0.1 + Math.sin(t * 1.2 + index) * 0.04
+        ? 0.38
+        : 0.1 + Math.sin(t * 1.2 + index) * 0.04
     const gs = isSelected ? 0.9 : hovered ? 0.72 : 0.55
     glowRef.current.scale.set(gs, gs, 1)
   })
