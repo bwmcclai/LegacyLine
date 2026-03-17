@@ -39,63 +39,77 @@ function Header({ count }: { count: number }) {
     <motion.header
       className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between"
       style={{
-        background: 'rgba(10,10,10,0.85)',
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-        borderBottom: '1px solid rgba(201,168,76,0.12)',
+        background: 'rgba(10, 10, 10, 0.4)',
+        backdropFilter: 'blur(16px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(16px) saturate(180%)',
+        borderBottom: '1px solid rgba(201, 168, 76, 0.15)',
+        boxShadow: '0 4px 30px rgba(0, 0, 0, 0.5)',
         // Safe area for iPhone notch / Dynamic Island
-        paddingTop: 'max(env(safe-area-inset-top), 10px)',
-        paddingLeft: 'max(env(safe-area-inset-left), 16px)',
-        paddingRight: 'max(env(safe-area-inset-right), 16px)',
-        paddingBottom: '10px',
+        paddingTop: 'max(env(safe-area-inset-top), 12px)',
+        paddingLeft: 'max(env(safe-area-inset-left), 24px)',
+        paddingRight: 'max(env(safe-area-inset-right), 24px)',
+        paddingBottom: '12px',
       }}
-      initial={{ y: -60, opacity: 0 }}
+      initial={{ y: -100, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
-      transition={{ duration: 0.6 }}
+      transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
     >
+      <div
+        className="absolute inset-x-0 bottom-0 h-px"
+        style={{ background: 'linear-gradient(90deg, transparent, rgba(201,168,76,0.3), transparent)' }}
+      />
+      
       {/* Left: Logo + title */}
-      <div className="flex items-center gap-2.5">
-        <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+      <div className="flex items-center gap-4 group cursor-default">
+        <motion.div
+          className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 relative overflow-hidden"
           style={{
-            background: 'linear-gradient(135deg, #1a1200, #2a1f00)',
-            border: '1px solid rgba(201,168,76,0.35)',
-            boxShadow: '0 0 10px rgba(201,168,76,0.2)',
+            background: 'linear-gradient(135deg, #1e1500, #2d2000)',
+            border: '1px solid rgba(201, 168, 76, 0.4)',
           }}
+          whileHover={{ scale: 1.05, borderColor: 'rgba(201, 168, 76, 0.6)' }}
         >
-          <span className="text-sm font-black" style={{ color: '#c9a84c', fontFamily: 'Georgia, serif' }}>
+          <div className="absolute inset-0 bg-gradient-to-tr from-miller-gold/10 to-transparent" />
+          <span className="text-xl font-black relative z-10" style={{ color: '#c9a84c', fontFamily: 'var(--font-crimson-pro), Georgia, serif' }}>
             N
           </span>
-        </div>
+        </motion.div>
         <div>
-          <p className="text-sm font-bold gold-text-animated leading-none" style={{ fontFamily: 'Georgia, serif' }}>
+          <h1 className="text-lg font-bold gold-text-animated leading-none tracking-tight" style={{ fontFamily: 'var(--font-crimson-pro), Georgia, serif' }}>
             Legacy Line
-          </p>
-          <p className="text-white/30 text-[9px] tracking-widest uppercase leading-none mt-0.5">
+          </h1>
+          <p className="text-white/40 text-[10px] tracking-[0.25em] uppercase leading-none mt-1" style={{ fontFamily: 'var(--font-outfit), sans-serif', fontWeight: 500 }}>
             Noblesville Schools
           </p>
         </div>
       </div>
 
       {/* Right: count badge (compact on mobile) */}
-      <div
-        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full"
+      <motion.div
+        className="flex items-center gap-2 px-4 py-2 rounded-full cursor-default"
         style={{
-          background: 'rgba(201,168,76,0.1)',
-          border: '1px solid rgba(201,168,76,0.25)',
-          color: '#c9a84c',
-          fontSize: '11px',
-          fontWeight: '600',
+          background: 'rgba(201, 168, 76, 0.08)',
+          border: '1px solid rgba(201, 168, 76, 0.2)',
+          backdropFilter: 'blur(8px)',
         }}
+        whileHover={{ background: 'rgba(201, 168, 76, 0.12)', borderColor: 'rgba(201, 168, 76, 0.3)' }}
       >
-        <span
-          className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-          style={{ background: '#c9a84c', boxShadow: '0 0 5px #c9a84c' }}
-        />
-        <span>
-          {count} {count === 1 ? 'Legacy' : 'Legacies'}
+        <div className="relative flex items-center justify-center">
+          <span
+            className="w-2 h-2 rounded-full"
+            style={{ background: '#c9a84c', boxShadow: '0 0 10px #c9a84c' }}
+          />
+          <motion.span
+            className="absolute w-2 h-2 rounded-full"
+            style={{ background: '#c9a84c' }}
+            animate={{ scale: [1, 2.5], opacity: [0.5, 0] }}
+            transition={{ duration: 2, repeat: Infinity, ease: 'easeOut' }}
+          />
+        </div>
+        <span className="text-[12px] font-bold tracking-wide" style={{ color: '#c9a84c', fontFamily: 'var(--font-outfit), sans-serif' }}>
+          {count} {count === 1 ? 'LEGACY' : 'LEGACIES'}
         </span>
-      </div>
+      </motion.div>
     </motion.header>
   )
 }
@@ -112,7 +126,7 @@ function InstructionToast({ onDismiss }: { onDismiss: () => void }) {
       className="fixed z-40 left-1/2"
       style={{
         bottom: 'calc(env(safe-area-inset-bottom, 0px) + 108px)',
-        transform: 'translateX(-50%)',
+        transform: 'translateX(-60%)',
         maxWidth: '290px',
         width: '85%',
       }}
@@ -173,36 +187,6 @@ function EmptyState() {
   )
 }
 
-// ——— Floating Record CTA ———
-function RecordButton() {
-  return (
-    <motion.a
-      href="/record"
-      className="fixed left-1/2 z-50 flex items-center gap-2 font-bold uppercase tracking-widest"
-      style={{
-        bottom: 'max(env(safe-area-inset-bottom, 0px) + 24px, 28px)',
-        transform: 'translateX(-50%)',
-        background: 'linear-gradient(135deg, #9a7030, #c9a84c, #e6c96d, #c9a84c, #9a7030)',
-        backgroundSize: '200% auto',
-        animation: 'shimmer 4s linear infinite',
-        color: '#0a0a0a',
-        padding: '14px 28px',
-        borderRadius: '100px',
-        fontSize: '13px',
-        boxShadow: '0 0 32px rgba(201,168,76,0.45), 0 4px 24px rgba(0,0,0,0.5)',
-        whiteSpace: 'nowrap',
-        WebkitTapHighlightColor: 'transparent',
-      }}
-      initial={{ opacity: 0, y: 24 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 1.2, duration: 0.5, type: 'spring', stiffness: 130, damping: 20 }}
-      whileTap={{ scale: 0.95 }}
-    >
-      <span style={{ fontSize: '16px' }}>🎙</span>
-      Record Your Legacy
-    </motion.a>
-  )
-}
 
 // ——— Main page ———
 export default function WallPage() {
@@ -329,8 +313,7 @@ export default function WallPage() {
         )}
       </AnimatePresence>
 
-      {/* Floating record button */}
-      <RecordButton />
+
 
       {/* Bottom fade */}
       <div

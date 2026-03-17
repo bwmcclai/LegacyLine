@@ -232,11 +232,13 @@ function RecordingNode({
   isSelected,
   onClick,
   index,
+  analyserRef,
 }: {
   recording: Recording
   isSelected: boolean
   onClick: () => void
   index: number
+  analyserRef?: React.MutableRefObject<AnalyserNode | null>
 }) {
   const spriteRef = useRef<THREE.Sprite>(null)
   const glowRef = useRef<THREE.Sprite>(null)
@@ -271,13 +273,32 @@ function RecordingNode({
 
     // Glow opacity
     const gm = glowRef.current.material as THREE.SpriteMaterial
+    
+    // Audio-reactive flash
+    let audioFlash = 0
+    if (isSelected && analyserRef?.current) {
+      const data = new Uint8Array(analyserRef.current.frequencyBinCount)
+      analyserRef.current.getByteFrequencyData(data)
+      const avg = data.reduce((a, b) => a + b, 0) / data.length
+      audioFlash = avg / 255
+    }
+
     gm.opacity = isSelected
-      ? 0.55 + Math.abs(Math.sin(t * 3.2 + index * 0.7)) * 0.3
+      ? 0.55 + Math.abs(Math.sin(t * 3.2 + index * 0.7)) * 0.3 + audioFlash * 0.45
       : hovered
         ? 0.38
         : 0.1 + Math.sin(t * 1.2 + index) * 0.04
-    const gs = isSelected ? 0.9 : hovered ? 0.72 : 0.55
+    
+    const gs = isSelected 
+      ? 0.9 + audioFlash * 0.6 // Selected node grows with audio
+      : hovered 
+        ? 0.72 
+        : 0.55
     glowRef.current.scale.set(gs, gs, 1)
+
+    // Also pulse the sprite itself slightly with audio
+    const ss = targetS + audioFlash * 0.15
+    spriteRef.current.scale.set(ss, ss, 1)
   })
 
   return (
@@ -334,17 +355,82 @@ function RecordingNode({
   )
 }
 
+// ─── Wavelength Connection ──────────────────────────────────────────────
+function WavelengthConnection({
+  targetPos,
+  isSelected,
+  index,
+}: {
+  targetPos: THREE.Vector3
+  isSelected: boolean
+  index: number
+}) {
+  const SEGMENTS = 32
+
+  const geometry = useMemo(() => {
+    const pts = []
+    for (let i = 0; i <= SEGMENTS; i++) {
+      pts.push(new THREE.Vector3(0, 0, 0))
+    }
+    return new THREE.BufferGeometry().setFromPoints(pts)
+  }, [])
+
+  const lineObj = useMemo(() => {
+    const mat = new THREE.LineBasicMaterial({
+      color: isSelected ? '#f0d878' : '#c9a84c',
+      transparent: true,
+      depthWrite: false,
+    })
+    return new THREE.Line(geometry, mat)
+  }, [geometry, isSelected])
+
+  useFrame((state) => {
+    if (!lineObj) return
+    const pos = lineObj.geometry.attributes.position as THREE.BufferAttribute
+    const t = state.clock.getElapsedTime()
+
+    for (let i = 0; i <= SEGMENTS; i++) {
+      const pct = i / SEGMENTS
+      // Base line from center (0,0,0) to node position
+      const p = new THREE.Vector3().lerpVectors(new THREE.Vector3(0, 0, 0), targetPos, pct)
+
+      // Add "wavelength" animation
+      // Amplitude increases in the middle of the line, and is higher for selected node
+      const amp = (isSelected ? 0.25 : 0.08) * Math.sin(pct * Math.PI)
+      const freq = isSelected ? 12 : 6
+      const speed = isSelected ? 4 : 2
+
+      const wave = Math.sin(pct * freq - t * speed + index) * amp
+      
+      // Offset perpendicular to the line direction
+      p.y += wave
+      
+      pos.setXYZ(i, p.x, p.y, p.z)
+    }
+    pos.needsUpdate = true
+    
+    const mat = lineObj.material as THREE.LineBasicMaterial
+    mat.opacity = isSelected ? 0.85 : 0.28 + Math.sin(t * 1.5 + index) * 0.1
+  })
+
+  return <primitive object={lineObj} />
+}
+
 // ─── Orbital Ring ──────────────────────────────────────────────────────
 function OrbitalRing({
   cfg,
   recordings,
   selectedId,
   onSelect,
+  nodePositionsRef,
+  analyserRef,
 }: {
   cfg: (typeof RINGS)[number]
   recordings: Recording[]
   selectedId: string | null
   onSelect: (rec: Recording, worldPos: THREE.Vector3) => void
+  nodePositionsRef: React.MutableRefObject<Map<string, THREE.Vector3>>
+  analyserRef: React.MutableRefObject<AnalyserNode | null>
 }) {
   const groupRef = useRef<THREE.Group>(null)
 
@@ -362,26 +448,18 @@ function OrbitalRing({
     )
   }, [cfg.radius])
 
-  const connectLines = useMemo(() => {
-    return recordings.map((rec, i) => {
-      const a = (i / Math.max(recordings.length, 1)) * Math.PI * 2
-      const pts = [0, 0, 0, Math.cos(a) * cfg.radius, 0, Math.sin(a) * cfg.radius]
-      const geo = new THREE.BufferGeometry()
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3))
-      const isSelected = rec.id === selectedId
-      return new THREE.Line(
-        geo,
-        new THREE.LineBasicMaterial({
-          color: isSelected ? '#f0d878' : '#c9a84c',
-          transparent: true,
-          opacity: isSelected ? 0.55 : 0.14,
-        })
-      )
-    })
-  }, [recordings, cfg.radius, selectedId])
-
   useFrame((_, delta) => {
-    if (groupRef.current) groupRef.current.rotation.y += cfg.speed * delta
+    if (groupRef.current) {
+      groupRef.current.rotation.y += cfg.speed * delta
+      
+      // Update real-time world positions for camera tracking
+      recordings.forEach((rec, i) => {
+        const a = (i / Math.max(recordings.length, 1)) * Math.PI * 2
+        const local = new THREE.Vector3(Math.cos(a) * cfg.radius, 0, Math.sin(a) * cfg.radius)
+        const world = groupRef.current!.localToWorld(local)
+        nodePositionsRef.current.set(rec.id, world)
+      })
+    }
   })
 
   const handleClick = useCallback(
@@ -398,19 +476,28 @@ function OrbitalRing({
   return (
     <group ref={groupRef} rotation={[cfg.tiltX, 0, 0]}>
       <primitive object={ringLine} />
-      {connectLines.map((line, i) => (
-        <primitive key={recordings[i]?.id ?? i} object={line} />
-      ))}
+      
       {recordings.map((rec, i) => {
         const a = (i / Math.max(recordings.length, 1)) * Math.PI * 2
+        const localPos = new THREE.Vector3(Math.cos(a) * cfg.radius, 0, Math.sin(a) * cfg.radius)
         return (
-          <group key={rec.id} position={[Math.cos(a) * cfg.radius, 0, Math.sin(a) * cfg.radius]}>
-            <RecordingNode
-              recording={rec}
-              isSelected={rec.id === selectedId}
-              onClick={() => handleClick(rec, i)}
-              index={i}
+          <group key={rec.id}>
+            {/* Animated wavelength connecting to center */}
+            <WavelengthConnection 
+              targetPos={localPos} 
+              isSelected={rec.id === selectedId} 
+              index={i} 
             />
+            
+            <group position={localPos}>
+              <RecordingNode
+                recording={rec}
+                isSelected={rec.id === selectedId}
+                onClick={() => handleClick(rec, i)}
+                index={i}
+                analyserRef={analyserRef}
+              />
+            </group>
           </group>
         )
       })}
@@ -457,45 +544,70 @@ function GoldParticles() {
 
 // ─── Camera Controller ─────────────────────────────────────────────────
 function CameraController({
-  nodeWorldPos,
-  isSelected,
+  selectedId,
+  nodePositionsRef,
+  isPlaying,
   orbitRef,
 }: {
-  nodeWorldPos: THREE.Vector3 | null
-  isSelected: boolean
+  selectedId: string | null
+  nodePositionsRef: React.MutableRefObject<Map<string, THREE.Vector3>>
+  isPlaying: boolean
   orbitRef: React.MutableRefObject<any>
 }) {
-  const { camera } = useThree()
-  const camTarget = useRef(new THREE.Vector3(0, 1.5, 9.5))
+  const { camera, size } = useThree()
+  const isMobile = size.width < 768
+  
+  // Default camera position is further back on mobile to fit the whole formation
+  const defaultCamPos = useMemo(() => {
+    return isMobile 
+      ? new THREE.Vector3(0, 4.8, 18.5)
+      : new THREE.Vector3(0, 3.5, 14.5)
+  }, [isMobile])
+
+  const camTarget = useRef(defaultCamPos.clone())
   const lookTarget = useRef(new THREE.Vector3(0, 0, 0))
   const currentLook = useRef(new THREE.Vector3(0, 0, 0))
 
   useEffect(() => {
-    if (isSelected && nodeWorldPos) {
-      const dir = nodeWorldPos.clone().normalize()
-      camTarget.current
-        .copy(nodeWorldPos)
-        .add(dir.clone().multiplyScalar(2.4))
-        .add(new THREE.Vector3(0, 0.7, 0))
-      lookTarget.current.copy(nodeWorldPos)
+    if (selectedId) {
       if (orbitRef.current) orbitRef.current.enabled = false
     } else {
-      camTarget.current.set(0, 1.5, 9.5)
-      lookTarget.current.set(0, 0, 0)
       const tid = setTimeout(() => {
         if (orbitRef.current) {
           orbitRef.current.target.set(0, 0, 0)
           orbitRef.current.enabled = true
         }
-      }, 1600)
+      }, 1200)
       return () => clearTimeout(tid)
     }
-  }, [isSelected, nodeWorldPos])
+  }, [selectedId, orbitRef])
 
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
+    if (selectedId && nodePositionsRef.current.has(selectedId)) {
+      const worldPos = nodePositionsRef.current.get(selectedId)!
+      const dir = worldPos.clone().normalize()
+      
+      // "Moon orbit" logic: position camera further out on the same radial vector
+      // This keeps the node directly between the camera and the center graphic
+      const offsetDistance = isMobile ? 3.2 : 4.5
+      camTarget.current.copy(worldPos).add(dir.clone().multiplyScalar(offsetDistance))
+      
+      // Subtle height for a better perspective looking down at both
+      camTarget.current.y += isMobile ? 1.4 : 2.2
+      
+      // Look through the node at the center graphic
+      lookTarget.current.set(0, 0, 0)
+    } else {
+      camTarget.current.copy(defaultCamPos)
+      lookTarget.current.set(0, 0, 0)
+    }
+
     if (orbitRef.current?.enabled) return
-    camera.position.lerp(camTarget.current, delta * 1.7)
-    currentLook.current.lerp(lookTarget.current, delta * 1.9)
+    
+    // Faster lerp for more responsive "locked-on" feel
+    const lerpFactor = selectedId ? 2.4 : 1.4
+    camera.position.lerp(camTarget.current, delta * lerpFactor)
+    currentLook.current.lerp(lookTarget.current, delta * (lerpFactor + 0.2))
     camera.lookAt(currentLook.current)
   })
 
@@ -521,6 +633,7 @@ function Scene({
   orbitRef: React.MutableRefObject<any>
 }) {
   const rings = useMemo(() => assignToRings(recordings), [recordings])
+  const nodePositionsRef = useRef(new Map<string, THREE.Vector3>())
 
   return (
     <>
@@ -540,12 +653,15 @@ function Scene({
           recordings={items}
           selectedId={selectedId}
           onSelect={onSelect}
+          nodePositionsRef={nodePositionsRef}
+          analyserRef={analyserRef}
         />
       ))}
 
       <CameraController
-        nodeWorldPos={selectedWorldPos}
-        isSelected={!!selectedId}
+        selectedId={selectedId}
+        nodePositionsRef={nodePositionsRef}
+        isPlaying={isPlaying}
         orbitRef={orbitRef}
       />
 
@@ -553,7 +669,7 @@ function Scene({
         ref={orbitRef}
         enablePan={false}
         minDistance={5}
-        maxDistance={14}
+        maxDistance={18}
         autoRotate
         autoRotateSpeed={0.35}
         maxPolarAngle={Math.PI * 0.78}
@@ -630,22 +746,35 @@ function SelectedCard({
     audio.addEventListener('ended', onEnd)
 
     const handlePlay = async () => {
+      console.log(`[Audio] Attempting to play: ${recording.name} (ID: ${recording.id})`)
       try {
-        // Redundant wake-up call for Mac
-        if (ctx.state === 'suspended') await ctx.resume()
+        // 1. Ensure audio is loaded and ready
+        audio.load()
         
-        const playPromise = audio.play()
-        await playPromise
+        // 2. Wake up context
+        if (ctx.state === 'suspended') {
+          console.log('[Audio] Context suspended, resuming...')
+          await ctx.resume().catch(console.error)
+        }
+        
+        // 3. Play
+        console.log('[Audio] Calling audio.play()...')
+        await audio.play()
+        console.log('[Audio] Playback started successfully')
         onPlaying(true)
         setNeedsTap(false)
         
-        // Final verification check for output
-        if (ctx.state === 'suspended') ctx.resume()
+        // 4. Final verification check for output
+        if (ctx.state === 'suspended') {
+          console.log('[Audio] Context still suspended after play, forcing resume...')
+          await ctx.resume().catch(console.error)
+        }
       } catch (e: any) {
+        console.error('[Audio] Playback failed/blocked:', e)
         if (e.name === 'NotAllowedError') {
           setNeedsTap(true)
         } else if (e.name !== 'AbortError') {
-          console.error('[Audio] Play failed:', e)
+          console.error('[Audio] Unexpected playback error:', e)
         }
       }
     }
@@ -653,13 +782,19 @@ function SelectedCard({
     handlePlay()
 
     return () => {
+      console.log(`[Audio] Unmounting card for ${recording.name}`)
       if (analyserRef.current === analyser) analyserRef.current = null
       onPlaying(false)
       audio.removeEventListener('timeupdate', onTime)
       audio.removeEventListener('loadedmetadata', onLoad)
       audio.removeEventListener('ended', onEnd)
       audio.pause()
-      try { source?.disconnect(analyser); analyser.disconnect() } catch {}
+      try { 
+        source?.disconnect() 
+        analyser.disconnect() 
+      } catch (err) {
+        console.warn('[Audio] Cleanup error:', err)
+      }
     }
   }, [recording.id, onStop, onPlaying, analyserRef, tryPlay])
 
@@ -671,15 +806,14 @@ function SelectedCard({
         position: 'fixed',
         top: '76px',
         left: '50%',
-        transform: 'translateX(-50%)',
         zIndex: 60,
         maxWidth: '360px',
         width: 'calc(100% - 2rem)',
         pointerEvents: 'all',
       }}
-      initial={{ opacity: 0, y: -24, scale: 0.95 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -20, scale: 0.95 }}
+      initial={{ opacity: 0, y: -24, scale: 0.95, x: '-50%' }}
+      animate={{ opacity: 1, y: 0, scale: 1, x: '-50%' }}
+      exit={{ opacity: 0, y: 40, scale: 0, x: '-50%' }}
       transition={{ duration: 0.45, type: 'spring', stiffness: 140, damping: 20 }}
     >
       <audio 
@@ -831,9 +965,12 @@ export default function NFormation({ recordings }: { recordings: Recording[] }) 
     // Create & resume AudioContext during the user gesture — required on iOS Safari.
     // If created later (e.g. in a useEffect) the context starts suspended and all
     // audio routed through it is silently muted.
-    if (!sharedAudioCtx) {
+    if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
       const Ctor = window.AudioContext || (window as any).webkitAudioContext
-      if (Ctor) sharedAudioCtx = new Ctor()
+      if (Ctor) {
+        sharedAudioCtx = new Ctor()
+        console.log('[Audio] Initialized new shared AudioContext')
+      }
     }
     if (sharedAudioCtx?.state === 'suspended') {
       sharedAudioCtx.resume().catch(console.error)
@@ -857,7 +994,7 @@ export default function NFormation({ recordings }: { recordings: Recording[] }) 
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-      <Canvas camera={{ position: [0, 1.5, 9.5], fov: 50 }} style={{ background: 'transparent' }} dpr={[1, 2]}>
+      <Canvas camera={{ position: [0, 3.5, 14.5], fov: 45 }} style={{ background: 'transparent' }} dpr={[1, 2]}>
         <Scene
           recordings={recordings}
           selectedId={selectedRecording?.id ?? null}

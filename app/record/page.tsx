@@ -315,19 +315,32 @@ export default function RecordPage() {
   const prepareMic = useCallback(async () => {
     if (streamRef.current) return
     setErrorMsg(null)
+    console.log('[Mic] Preparing microphone...')
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: { 
-          echoCancellation: true, 
-          noiseSuppression: true,
-          autoGainControl: true 
-        } 
-      })
+      // 1. Initial request to ensure permissions and populate labels
+      let stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      
+      // 2. Enumerate for preference
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const preferredMic = devices.find(d => 
+        d.kind === 'audioinput' && 
+        (d.label.toLowerCase().includes('microphone') || d.label.toLowerCase().includes('built-in'))
+      )
+
+      if (preferredMic && !stream.getAudioTracks()[0].label.toLowerCase().includes('built-in')) {
+        console.log('[Mic] Switching to preferred device:', preferredMic.label)
+        stream.getTracks().forEach(t => t.stop())
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: { deviceId: { exact: preferredMic.deviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
+        })
+      }
+
       streamRef.current = stream
       setMicStream(stream)
 
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
       audioCtxRef.current = ctx
+      
       const src = ctx.createMediaStreamSource(stream)
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 128
@@ -341,36 +354,80 @@ export default function RecordPage() {
         setWaveform(Array.from(d.slice(0, 50)).map((v) => v / 255))
         animRef.current = requestAnimationFrame(draw)
       }
+
+      if (ctx.state === 'suspended') {
+        console.log('[Mic] Resuming suspended context...')
+        await ctx.resume()
+      }
+      console.log('[Mic] Context state:', ctx.state)
+
       draw()
       setStep('setup')
     } catch (err: any) {
-      console.error(err)
+      console.error('[Mic] Preparation failed:', err)
       setErrorMsg('Microphone access is required to record your message.')
     }
   }, [])
 
   const startRecording = useCallback(async () => {
-    // 1. Teardown preview stream to release hardware
-    if (streamRef.current) {
-        streamRef.current.getTracks().forEach(t => t.stop())
-        streamRef.current = null
-    }
     setErrorMsg(null)
+    console.log('[Recorder] Starting recording flow...')
     
     try {
-      // 2. Request a dedicated fresh stream for recording
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      streamRef.current = stream
-      setMicStream(stream)
+      // 1. Enumerate devices for debugging
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const audioDevices = devices.filter(d => d.kind === 'audioinput')
+      console.log('[Recorder] Available audio devices:', audioDevices.map(d => `${d.label} (${d.deviceId})`))
 
-      // 3. Re-connect visualizer to the new stream
-      if (audioCtxRef.current) {
-        const src = audioCtxRef.current.createMediaStreamSource(stream)
-        const analyser = audioCtxRef.current.createAnalyser()
-        analyser.fftSize = 128
-        src.connect(analyser)
-        analyserRef.current = analyser
+      // 2. Ensure we have a stream (prefer physical mic if BlackHole is default)
+      let stream = streamRef.current
+      if (!stream || !stream.active) {
+        console.log('[Recorder] Getting fresh stream...')
+        
+        // Try to find a non-virtual mic if possible
+        const preferredMic = audioDevices.find(d => 
+          d.label.toLowerCase().includes('microphone') || 
+          d.label.toLowerCase().includes('built-in')
+        )
+        
+        const constraints: MediaStreamConstraints = { 
+          audio: preferredMic 
+            ? { deviceId: { exact: preferredMic.deviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+            : { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
+        }
+        
+        console.log('[Recorder] Using constraints:', constraints)
+        stream = await navigator.mediaDevices.getUserMedia(constraints)
+        streamRef.current = stream
+        setMicStream(stream)
       }
+
+      // Explicitly enable all audio tracks
+      stream.getAudioTracks().forEach(track => {
+        console.log(`[Recorder] Track: ${track.label}, Enabled: ${track.enabled}, State: ${track.readyState}`)
+        track.enabled = true
+      })
+
+      // 2. Ensure AudioContext is alive and connected to destination (sink)
+      if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
+        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
+      }
+      const ctx = audioCtxRef.current
+      if (ctx.state === 'suspended') await ctx.resume()
+
+      // Re-connect visualizer if needed
+      const src = ctx.createMediaStreamSource(stream)
+      
+      // Zero-gain "sink" to keep context/stream alive in some browsers
+      const sink = ctx.createGain()
+      sink.gain.value = 0
+      src.connect(sink)
+      sink.connect(ctx.destination)
+
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 128
+      src.connect(analyser)
+      analyserRef.current = analyser
 
       const mime = [
         'audio/webm;codecs=opus',
@@ -382,59 +439,67 @@ export default function RecordPage() {
       ].find((t) => {
         try { return MediaRecorder.isTypeSupported(t) } catch { return false }
       }) ?? ''
-      const mr = new MediaRecorder(stream, { mimeType: mime })
+      
+      console.log(`[Recorder] Using MIME type: ${mime}`)
+      const mr = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 128000 })
       mrRef.current = mr
       chunksRef.current = []
       
       mr.ondataavailable = (e) => { 
-        if (e.data.size > 0) {
+        if (e.data && e.data.size > 0) {
           chunksRef.current.push(e.data)
         }
       }
 
       mr.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: mime })
-        console.log(`[Recorder] Finalized. Size: ${Math.round(blob.size / 1024)}KB, Type: ${mime}`)
+        console.log(`[Recorder] Finalized. Size: ${Math.round(blob.size / 1024)}KB, Type: ${mime}, Chunks: ${chunksRef.current.length}`)
         
+        if (blob.size < 100) {
+          console.warn('[Recorder] Blob is suspiciously small! Recording may be silent.')
+        }
+
         setAudioBlob(blob)
         setAudioUrl(URL.createObjectURL(blob))
         
+        // Stop stream tracks only after a slight delay to ensure cleanup doesn't clip the end
         setTimeout(() => {
-          stream.getTracks().forEach((t) => t.stop())
+          stream?.getTracks().forEach((t) => {
+            console.log(`[Recorder] Stopping track: ${t.label}`)
+            t.stop()
+          })
+          streamRef.current = null
           setMicStream(null)
-        }, 200)
+          if (audioCtxRef.current?.state !== 'closed') {
+            audioCtxRef.current?.close()
+          }
+        }, 300)
 
         cancelAnimationFrame(animRef.current)
         setWaveform(Array(50).fill(0.05))
         setStep('review')
       }
 
-      // 4. Stabilize hardware before starting
-      setTimeout(() => {
-        if (mr.state === 'inactive' && stream.active) {
-          mr.start(250) 
-          setIsRecording(true)
-          setIsPaused(false)
-          setStep('recording')
-          setSecondsLeft(MAX_SECONDS)
-          setSecondsRecorded(0)
+      // 4. Start recording immediately
+      mr.start(250) // Use timeslices to ensure data flows
+      setIsRecording(true)
+      setIsPaused(false)
+      setStep('recording')
+      setSecondsLeft(MAX_SECONDS)
+      setSecondsRecorded(0)
 
-          let elapsed = 0
-          timerRef.current = setInterval(() => {
-            if (!isPaused) {
-              elapsed++
-              setSecondsRecorded(elapsed)
-              setSecondsLeft(MAX_SECONDS - elapsed)
-              if (elapsed >= MAX_SECONDS) stopRecording()
-            }
-          }, 1000)
-        } else {
-          setErrorMsg('Recorder failed to initialize. Please refresh and try again.')
+      let elapsed = 0
+      timerRef.current = setInterval(() => {
+        if (!isPaused) {
+          elapsed++
+          setSecondsRecorded(elapsed)
+          setSecondsLeft(MAX_SECONDS - elapsed)
+          if (elapsed >= MAX_SECONDS) stopRecording()
         }
-      }, 500)
+      }, 1000)
 
     } catch (err: any) {
-      console.error(err)
+      console.error('[Recorder] Failed to start:', err)
       setErrorMsg('Recording failed to start. Please check your microphone permissions.')
     }
   }, [isPaused, stopRecording])
