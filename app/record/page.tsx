@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion'
-import { uploadAudio, uploadSelfie, saveRecording } from '@/lib/supabase'
+import { uploadAudio, uploadSelfie, saveRecording } from '@/lib/cloudinary'
 
 type Step = 'intro' | 'setup' | 'recording' | 'review' | 'details' | 'success'
 const MAX_SECONDS = 30

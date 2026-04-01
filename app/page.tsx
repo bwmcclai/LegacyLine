@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic'
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { getRecordings } from '@/lib/supabase'
+import { getRecordings } from '@/lib/cloudinary'
 import type { Recording } from '@/lib/types'
 
 // Three.js scene — client only, no SSR
